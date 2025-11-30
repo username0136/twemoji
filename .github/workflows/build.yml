@@ -1,13 +1,12 @@
 name: Build Twemoji Android Font
 
-# manual trigger from Actions UI
 on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Checkout repo
@@ -17,51 +16,75 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y python3-pip imagemagick fontforge git cmake pkg-config libpng-dev zlib1g-dev
-          # ensure pip bin in PATH
+          # ensure pip --user bin is available
           export PATH="$HOME/.local/bin:$PATH"
-          pip3 install --user fonttools pillow git+https://github.com/googlefonts/nototools.git
+          # install python libs; use nototools from upstream for best compatibility
+          pip3 install --user fonttools pillow
+          pip3 install --user git+https://github.com/googlefonts/nototools.git
 
-      - name: List repo (debug)
-        run: ls -la
+      - name: Sanity: list repo root
+        run: |
+          echo "Repo root:"
+          ls -la
 
       - name: Clone googlefonts/noto-emoji
         run: |
           git clone https://github.com/googlefonts/noto-emoji.git
 
+      - name: Ensure script is executable
+        run: |
+          chmod +x scripts/convert_svgs.sh || true
+
       - name: Convert SVGs to PNGs for noto-emoji
         run: |
-          chmod +x scripts/convert_svgs.sh
+          # convert_svgs.sh will create noto-emoji/png/{72,128}/...
           ./scripts/convert_svgs.sh assets/svg noto-emoji/png
 
-      - name: Show converted PNGs (debug)
+      - name: Show converted PNGs (first hits)
         run: |
-          find noto-emoji/png -maxdepth 2 -type f -name '*.png' | head -n 20 || true
-          echo "PNG count:" $(find noto-emoji/png -type f -name '*.png' | wc -l)
+          echo "Some converted PNGs:"
+          find noto-emoji/png -type f -name '*.png' | head -n 30 || true
+          echo "PNG total count:"
+          find noto-emoji/png -type f -name '*.png' | wc -l || true
 
       - name: Build CBDT (bitmap) font
         env:
           PATH: ${{ github.workspace }}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
         run: |
+          set -euxo pipefail
           cd noto-emoji || exit 1
-          # Try common targets; adapt if your noto-emoji fork has different build flow.
+
+          # Some noto-emoji versions expect environment variables or have different targets.
+          # Prefer explicit CBDT target where available
           if grep -q "cbdt" Makefile 2>/dev/null; then
             make cbdt || true
           fi
-          # Some noto-emoji versions use python scripts — attempt a generic build helper if present.
+
+          # Try the python helper if present
           if [ -f tools/build_cbdt.py ]; then
             python3 tools/build_cbdt.py || true
           fi
-          # fallback: try the top-level make
+
+          # fallback to the top-level Makefile (may run checks)
+          # Makefile may run a check that needs nototools; we installed it above.
           make || true
-          # list produced fonts
-          find . -type f -name "*.ttf" -print || true
+
+          # list produced fonts (common locations)
+          echo "Possible font locations:"
+          find fonts -maxdepth 2 -type f -name '*.ttf' -print || true
+          find out -maxdepth 3 -type f -name '*.ttf' -print || true
+          find build -maxdepth 3 -type f -name '*.ttf' -print || true
+          find . -type f -name '*.ttf' -print | sed -n '1,200p' || true
 
       - name: Collect and upload font artifact
         uses: actions/upload-artifact@v4
         with:
           name: twemoji-android-font
           path: |
-            noto-emoji/*.ttf
-            noto-emoji/build/*.ttf
+            noto-emoji/fonts/*.ttf
             noto-emoji/out/*.ttf
+            noto-emoji/build/*.ttf
+            noto-emoji/*.ttf
             noto-emoji/**/build/*.ttf
+            noto-emoji/**/out/*.ttf
+            noto-emoji/**/fonts/*.ttf
