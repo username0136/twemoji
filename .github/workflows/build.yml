@@ -2,6 +2,15 @@ name: Build Twemoji Android Font
 
 on:
   workflow_dispatch:
+    inputs:
+      bypass_sequence_check:
+        description: 'Set true to skip the noto sequence coverage check (default true)'
+        required: false
+        default: 'true'
+      placeholder_sequences:
+        description: 'Optional multiline list of missing sequences (eg: 1f1e6_1f1e8) to create transparent placeholders, one per line'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -12,51 +21,100 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install system deps
+      - name: Install system deps & Python tools
         run: |
           sudo apt-get update -y
           sudo apt-get install -y python3-pip imagemagick fontforge git cmake pkg-config libpng-dev zlib1g-dev
           export PATH="$HOME/.local/bin:$PATH"
           pip3 install --user fonttools pillow
+          # use the upstream nototools for best compatibility
           pip3 install --user git+https://github.com/googlefonts/nototools.git
 
-      - name: Clone googlefonts/noto-emoji
-        run: git clone https://github.com/googlefonts/noto-emoji.git
-
-      - name: Make conversion script executable
-        run: chmod +x scripts/convert_svgs.sh
-
-      - name: Convert SVGs → 128px PNGs
-        run: ./scripts/convert_svgs.sh assets/svg noto-emoji/png
-
-      - name: Show converted PNGs (debug)
+      - name: Show repo root (debug)
         run: |
-          find noto-emoji/png -type f -name '*.png' | head -n 20 || true
-          echo "PNG count:" $(find noto-emoji/png -type f -name '*.png' | wc -l)
+          echo "Repo files:"
+          ls -la
 
-      - name: Build CBDT font
+      - name: Ensure scripts are executable
+        run: |
+          chmod +x scripts/rename_to_noto.sh || true
+          chmod +x scripts/convert_svgs.sh || true
+
+      - name: Normalize SVG filenames to Noto style
+        run: |
+          ./scripts/rename_to_noto.sh assets/svg
+
+      - name: Convert SVGs -> PNGs (for noto-emoji)
+        run: |
+          ./scripts/convert_svgs.sh assets/svg noto-emoji/png
+
+      - name: Create placeholder PNGs (optional)
+        if: ${{ inputs.placeholder_sequences != '' }}
+        run: |
+          set -euo pipefail
+          SEQ_STR="${{ inputs.placeholder_sequences }}"
+          # choose the primary size used by your build (72 is common)
+          PNG_DIR="noto-emoji/png/72"
+          mkdir -p "$PNG_DIR"
+          echo "Creating placeholders in $PNG_DIR"
+          # read multiline input and create each placeholder
+          echo "$SEQ_STR" | while IFS= read -r seq; do
+            seq=$(echo "$seq" | tr -d '\r' | tr -s ' ' )
+            [ -z "$seq" ] && continue
+            out="$PNG_DIR/emoji_u${seq}.png"
+            if [ -f "$out" ]; then
+              echo "exists: $out"
+            else
+              echo "create: $out"
+              convert -size 72x72 xc:none "$out"
+            fi
+          done
+          echo "placeholder creation done."
+
+      - name: Clone googlefonts/noto-emoji
+        run: |
+          git clone https://github.com/googlefonts/noto-emoji.git
+
+      - name: Build CBDT/CBLC font (noto-emoji)
         env:
           PATH: ${{ github.workspace }}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
         run: |
+          set -euxo pipefail
           cd noto-emoji || exit 1
 
-          # Try explicit CBDT target
-          if grep -q "cbdt" Makefile; then
-            make cbdt || true
+          # prefer explicit cbdt target where available
+          if grep -q "cbdt" Makefile 2>/dev/null; then
+            if [ "${{ inputs.bypass_sequence_check }}" = 'true' ]; then
+              make BYPASS_SEQUENCE_CHECK='True' cbdt || true
+            else
+              make cbdt || true
+            fi
           fi
 
-          # Try python CBDT script if available
+          # try python helper if present
           if [ -f tools/build_cbdt.py ]; then
-            python3 tools/build_cbdt.py || true
+            if [ "${{ inputs.bypass_sequence_check }}" = 'true' ]; then
+              BYPASS_SEQUENCE_CHECK='True' python3 tools/build_cbdt.py || true
+            else
+              python3 tools/build_cbdt.py || true
+            fi
           fi
 
-          # Fallback to full make
-          make || true
+          # fallback: top-level make (pass BYPASS if user asked)
+          if [ "${{ inputs.bypass_sequence_check }}" = 'true' ]; then
+            make BYPASS_SEQUENCE_CHECK='True' || true
+          else
+            make || true
+          fi
 
-          echo "Listing built TTFs:"
-          find . -type f -name '*.ttf' -print || true
+          # list likely font locations
+          echo "Fonts (fonts/, out/, build/, etc):"
+          find fonts -maxdepth 2 -type f -name '*.ttf' -print || true
+          find out -maxdepth 3 -type f -name '*.ttf' -print || true
+          find build -maxdepth 3 -type f -name '*.ttf' -print || true
+          find . -type f -name '*.ttf' -print | sed -n '1,200p' || true
 
-      - name: Upload built TTFs
+      - name: Upload built TTF(s)
         uses: actions/upload-artifact@v4
         with:
           name: twemoji-android-font
