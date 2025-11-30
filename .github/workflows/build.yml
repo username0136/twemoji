@@ -40,6 +40,10 @@ jobs:
           chmod +x scripts/rename_to_noto.sh || true
           chmod +x scripts/convert_svgs.sh || true
 
+      - name: Clone googlefonts/noto-emoji
+        run: |
+          git clone https://github.com/googlefonts/noto-emoji.git
+
       - name: Normalize SVG filenames to Noto style
         run: |
           ./scripts/rename_to_noto.sh assets/svg
@@ -71,9 +75,6 @@ jobs:
           done
           echo "placeholder creation done."
 
-      - name: Clone googlefonts/noto-emoji
-        run: |
-          git clone https://github.com/googlefonts/noto-emoji.git
 
       - name: Build CBDT/CBLC font (noto-emoji)
         env:
