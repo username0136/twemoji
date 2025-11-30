@@ -19,7 +19,7 @@ jobs:
           sudo apt-get install -y python3-pip imagemagick fontforge git cmake pkg-config libpng-dev zlib1g-dev
           # ensure pip bin in PATH
           export PATH="$HOME/.local/bin:$PATH"
-          pip3 install --user fonttools pillow
+          pip3 install --user fonttools pillow git+https://github.com/googlefonts/nototools.git
 
       - name: List repo (debug)
         run: ls -la
