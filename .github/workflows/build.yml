@@ -16,67 +16,47 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y python3-pip imagemagick fontforge git cmake pkg-config libpng-dev zlib1g-dev
-          # ensure pip --user bin is available
           export PATH="$HOME/.local/bin:$PATH"
-          # install python libs; use nototools from upstream for best compatibility
           pip3 install --user fonttools pillow
           pip3 install --user git+https://github.com/googlefonts/nototools.git
 
-      - name: Sanity: list repo root
-        run: |
-          echo "Repo root:"
-          ls -la
-
       - name: Clone googlefonts/noto-emoji
-        run: |
-          git clone https://github.com/googlefonts/noto-emoji.git
+        run: git clone https://github.com/googlefonts/noto-emoji.git
 
-      - name: Ensure script is executable
-        run: |
-          chmod +x scripts/convert_svgs.sh || true
+      - name: Make conversion script executable
+        run: chmod +x scripts/convert_svgs.sh
 
-      - name: Convert SVGs to PNGs for noto-emoji
-        run: |
-          # convert_svgs.sh will create noto-emoji/png/{72,128}/...
-          ./scripts/convert_svgs.sh assets/svg noto-emoji/png
+      - name: Convert SVGs → 128px PNGs
+        run: ./scripts/convert_svgs.sh assets/svg noto-emoji/png
 
-      - name: Show converted PNGs (first hits)
+      - name: Show converted PNGs (debug)
         run: |
-          echo "Some converted PNGs:"
-          find noto-emoji/png -type f -name '*.png' | head -n 30 || true
-          echo "PNG total count:"
-          find noto-emoji/png -type f -name '*.png' | wc -l || true
+          find noto-emoji/png -type f -name '*.png' | head -n 20 || true
+          echo "PNG count:" $(find noto-emoji/png -type f -name '*.png' | wc -l)
 
-      - name: Build CBDT (bitmap) font
+      - name: Build CBDT font
         env:
           PATH: ${{ github.workspace }}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
         run: |
-          set -euxo pipefail
           cd noto-emoji || exit 1
 
-          # Some noto-emoji versions expect environment variables or have different targets.
-          # Prefer explicit CBDT target where available
-          if grep -q "cbdt" Makefile 2>/dev/null; then
+          # Try explicit CBDT target
+          if grep -q "cbdt" Makefile; then
             make cbdt || true
           fi
 
-          # Try the python helper if present
+          # Try python CBDT script if available
           if [ -f tools/build_cbdt.py ]; then
             python3 tools/build_cbdt.py || true
           fi
 
-          # fallback to the top-level Makefile (may run checks)
-          # Makefile may run a check that needs nototools; we installed it above.
+          # Fallback to full make
           make || true
 
-          # list produced fonts (common locations)
-          echo "Possible font locations:"
-          find fonts -maxdepth 2 -type f -name '*.ttf' -print || true
-          find out -maxdepth 3 -type f -name '*.ttf' -print || true
-          find build -maxdepth 3 -type f -name '*.ttf' -print || true
-          find . -type f -name '*.ttf' -print | sed -n '1,200p' || true
+          echo "Listing built TTFs:"
+          find . -type f -name '*.ttf' -print || true
 
-      - name: Collect and upload font artifact
+      - name: Upload built TTFs
         uses: actions/upload-artifact@v4
         with:
           name: twemoji-android-font
