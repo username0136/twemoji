@@ -1,0 +1,67 @@
+name: Build Twemoji Android Font
+
+# manual trigger from Actions UI
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y python3-pip imagemagick fontforge git cmake pkg-config libpng-dev zlib1g-dev
+          # ensure pip bin in PATH
+          export PATH="$HOME/.local/bin:$PATH"
+          pip3 install --user fonttools pillow
+
+      - name: List repo (debug)
+        run: ls -la
+
+      - name: Clone googlefonts/noto-emoji
+        run: |
+          git clone https://github.com/googlefonts/noto-emoji.git
+
+      - name: Convert SVGs to PNGs for noto-emoji
+        run: |
+          chmod +x scripts/convert_svgs.sh
+          ./scripts/convert_svgs.sh assets/svg noto-emoji/png
+
+      - name: Show converted PNGs (debug)
+        run: |
+          find noto-emoji/png -maxdepth 2 -type f -name '*.png' | head -n 20 || true
+          echo "PNG count:" $(find noto-emoji/png -type f -name '*.png' | wc -l)
+
+      - name: Build CBDT (bitmap) font
+        env:
+          PATH: ${{ github.workspace }}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        run: |
+          cd noto-emoji || exit 1
+          # Try common targets; adapt if your noto-emoji fork has different build flow.
+          if grep -q "cbdt" Makefile 2>/dev/null; then
+            make cbdt || true
+          fi
+          # Some noto-emoji versions use python scripts — attempt a generic build helper if present.
+          if [ -f tools/build_cbdt.py ]; then
+            python3 tools/build_cbdt.py || true
+          fi
+          # fallback: try the top-level make
+          make || true
+          # list produced fonts
+          find . -type f -name "*.ttf" -print || true
+
+      - name: Collect and upload font artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: twemoji-android-font
+          path: |
+            noto-emoji/*.ttf
+            noto-emoji/build/*.ttf
+            noto-emoji/out/*.ttf
+            noto-emoji/**/build/*.ttf
